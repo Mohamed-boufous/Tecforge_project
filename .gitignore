@@ -1,3 +1,4 @@
 monvenv/
 __pycache__/
 *.pyc
+.env
