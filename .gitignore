@@ -2,3 +2,4 @@ monvenv/
 __pycache__/
 *.pyc
 .env
+resultats_uniques.json
