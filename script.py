@@ -4,6 +4,7 @@ import time
 import sqlite3
 import os
 from dotenv import load_dotenv
+from datetime import datetime
 load_dotenv()
 
 email = os.getenv("EMAIL")
@@ -64,7 +65,7 @@ def get_results(offset, limit):
         "limit": limit,
         "searchObjet": "",
         "mosearch": "",
-        "dateLimitStart": "2025-06-18T09:00:00.000Z",
+        "dateLimitStart": datetime.now().strftime("%Y-%m-%dT09:00:00.000Z"),
         "sort": "publishedDate",
         "sortDirection": "DESC",
         "state": "En cours",
