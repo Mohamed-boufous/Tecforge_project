@@ -16,7 +16,7 @@ def generer_liens(lien_initial):
     return lien_demande, lien_final
 
 # Exemple d'utilisation
-lien_depart = "https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseDetailsConsultation&refConsultation=910643&orgAcronyme=q1s"
+lien_depart = "https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseDetailsConsultation&refConsultation=911673&orgAcronyme=g8e"
 lien_demande, lien_telechargement = generer_liens(lien_depart)
 
 print(lien_demande)
