@@ -22,7 +22,7 @@ try:
     model = load_model()
 
     # MODIFIÉ : C'est la nouvelle façon de se connecter à une instance Weaviate locale.
-    # L'ancienne méthode `weaviate.Client(...)` n'est plus valide.
+    # L'ancienne méthode weaviate.Client(...) n'est plus valide.
     client = weaviate.connect_to_local()
 
     st.title("📂 Vérification et Recherche dans Weaviate")
