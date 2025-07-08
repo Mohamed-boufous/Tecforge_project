@@ -43,7 +43,6 @@ def extraire_texte_pdf(chemin_fichier):
             for page in reader.pages:
                 contenu = page.extract_text()
                 if contenu:
-                    # MODIFIÉ : Utilisation d'un seul saut de ligne pour correspondre à la nouvelle logique de découpage.
                     texte += contenu + "\n"
     except Exception as e:
         st.warning(f"Erreur de lecture PDF pour {os.path.basename(chemin_fichier)}: {e}")
@@ -52,7 +51,6 @@ def extraire_texte_pdf(chemin_fichier):
 def extraire_texte_docx(chemin_fichier):
     try:
         document = docx.Document(chemin_fichier)
-        # MODIFIÉ : Utilisation d'un seul saut de ligne pour joindre les paragraphes.
         return "\n".join([para.text for para in document.paragraphs if para.text.strip()])
     except Exception as e:
         st.warning(f"Erreur de lecture DOCX pour {os.path.basename(chemin_fichier)}: {e}")
@@ -64,7 +62,6 @@ def extraire_texte_excel(chemin_fichier):
         df = pd.read_excel(chemin_fichier, sheet_name=None, header=None)
         texte = ""
         for sheet_name in df:
-            # MODIFIÉ : Utilisation d'un seul saut de ligne pour joindre le contenu des feuilles.
             texte += df[sheet_name].to_string(index=False, header=False) + "\n"
         return texte
     except Exception as e:
@@ -85,33 +82,36 @@ def extraire_texte_fichier(chemin_fichier):
 
 def decouper_texte(texte):
     """Découpe un texte en paragraphes en se basant sur les sauts de ligne."""
-    # MODIFIÉ : Découpage par simple saut de ligne, comme demandé dans votre code de référence.
     return [p.strip() for p in texte.split("\n") if len(p.strip()) > 10]
 
 # --- Fonctions Weaviate et Workflow ---
 
-def traiter_fichier(client, chemin_fichier, model, st_status):
+def traiter_fichier(client, chemin_fichier, model, progress_bar_placeholder):
     """Extrait, vectorise et insère le contenu d'un fichier dans Weaviate."""
     nom_fichier = os.path.basename(chemin_fichier)
-    st_status.update(label=f"Lecture de {nom_fichier}...")
     
     texte = extraire_texte_fichier(chemin_fichier)
-    if not texte:
-        st_status.update(label=f"⚠️ Aucun texte trouvé dans {nom_fichier}, fichier ignoré.")
-        time.sleep(1)
-        return 0
+    if not texte: return 0
 
-    st_status.update(label=f"Texte extrait de {nom_fichier}. Découpage en paragraphes...")
     paragraphes = decouper_texte(texte)
-    
-    if not paragraphes:
-        st_status.update(label=f"⚠️ Aucun paragraphe valide trouvé dans {nom_fichier}, fichier ignoré.")
-        time.sleep(1)
-        return 0
+    if not paragraphes: return 0
 
-    st_status.update(label=f"Vectorisation de {len(paragraphes)} paragraphes pour {nom_fichier}...")
-    embeddings = model.encode(paragraphes, show_progress_bar=False)
+    progress_bar = progress_bar_placeholder.progress(0, text=f"Vectorisation de {nom_fichier}...")
     
+    all_embeddings = []
+    batch_size = 32
+    
+    for i in range(0, len(paragraphes), batch_size):
+        batch = paragraphes[i:i + batch_size]
+        batch_embeddings = model.encode(batch, show_progress_bar=False)
+        all_embeddings.extend(batch_embeddings)
+        
+        progress_value = (i + len(batch)) / len(paragraphes)
+        progress_text = f"Vectorisation de {nom_fichier}... {int(progress_value * 100)}%"
+        progress_bar.progress(progress_value, text=progress_text)
+
+    embeddings = all_embeddings
+
     doc_collection = client.collections.get(CLASS_NAME)
     objects_to_insert = [
         weaviate.classes.data.DataObject(
@@ -155,10 +155,26 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
             response = requests.get(url_dossier, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
             response.raise_for_status()
             
-            # Étape 3 : Décompression directe dans le dossier 'documents'.
+            # MODIFIÉ : Étape 3 - Décompression intelligente pour éviter les sous-dossiers.
             status.update(label="📦 Décompression des fichiers...")
             with zipfile.ZipFile(io.BytesIO(response.content), 'r') as zip_ref:
-                zip_ref.extractall(FILES_DIRECTORY) # Le chemin est bien le dossier principal.
+                for member in zip_ref.infolist():
+                    # Ne pas traiter les dossiers contenus dans le ZIP
+                    if member.is_dir():
+                        continue
+                    
+                    # Extraire seulement le nom du fichier, en ignorant les dossiers parents de l'archive
+                    file_name = os.path.basename(member.filename)
+                    
+                    if not file_name:
+                        continue
+
+                    # Créer le chemin de destination final directement dans le dossier 'documents'
+                    target_path = os.path.join(FILES_DIRECTORY, file_name)
+                    
+                    # Ouvrir le fichier source dans le ZIP et le copier dans la destination
+                    with zip_ref.open(member, 'r') as source, open(target_path, 'wb') as target:
+                        shutil.copyfileobj(source, target)
             
             fichiers_extraits = os.listdir(FILES_DIRECTORY)
             status.update(label=f"✨ {len(fichiers_extraits)} fichiers extraits.")
@@ -169,16 +185,21 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
             fichiers_a_traiter = [f for f in fichiers_extraits if f.lower().endswith((".pdf", ".docx", ".xlsx", ".xls"))]
             
             if not fichiers_a_traiter:
-                status.update(label="⚠️ Aucun fichier compatible trouvé dans l'archive.")
+                status.update(label="⚠️ Aucun fichier compatible trouvé dans l'archive.", state="error")
                 time.sleep(3)
                 return
 
+            progress_bar_placeholder = st.empty()
+
             for nom_fichier in fichiers_a_traiter:
                 chemin_complet = os.path.join(FILES_DIRECTORY, nom_fichier)
-                nb = traiter_fichier(client, chemin_complet, model, status)
+                nb = traiter_fichier(client, chemin_complet, model, progress_bar_placeholder)
                 total_paragraphes += nb
             
+            progress_bar_placeholder.empty()
             status.update(label=f"🎉 Processus terminé ! {total_paragraphes} paragraphes ont été indexés.", state="complete")
+            st.balloons()
+            time.sleep(2)
             st.rerun()
 
         except Exception as e:
@@ -186,18 +207,91 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
 
 # --- Application Streamlit ---
 try:
+    st.set_page_config(layout="wide", page_title="Assistant AO")
+    
+    st.markdown("""
+        <style>
+        /* Style général des titres */
+        h1, h2 {
+            color: #1e3a8a; /* Bleu foncé */
+            font-weight: bold;
+        }
+
+        /* Style pour centrer les boutons */
+        .stButton {
+            display: flex;
+            justify-content: center;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .stButton > button {
+            background-color: #000000; /* Noir */
+            color: white;
+            border-radius: 8px;
+            border: none;
+            padding: 10px 24px;
+            font-weight: bold;
+            transition: color 0.2s, background-color 0.2s; /* Transition douce pour les deux propriétés */
+        }
+
+        .stButton > button:hover {
+            background-color: #333333; /* Gris foncé au survol */
+            /* MODIFIÉ : Le texte devient vert au survol */
+            color: #22c55e; 
+        }
+
+        /* MODIFIÉ : Style pour les conteneurs de métriques avec un fond neutre */
+        div[data-testid="stMetric"] {
+            background-color: #000000;  /* Fond blanc propre */
+            border: 1px solid #e0e0e0;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+        }
+        
+        /* AJOUT : Style pour que seule la valeur de la métrique soit en vert */
+        div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
+            color: #16a34a; /* Vert pour la valeur (le chiffre) */
+        }
+
+        /* AJOUT : Style pour que l'étiquette reste dans une couleur neutre */
+        div[data-testid="stMetric"] div[data-testid="stMetricLabel"] {
+            color: #4b5563; /* Gris pour l'étiquette (le texte) */
+        }
+
+        /* Style pour les résultats de recherche */
+        div[data-testid="stInfo"] {
+            background-color: #eef2ff;
+            border-left: 5px solid #4f46e5;
+            padding: 1rem;
+            border-radius: 8px;
+            color: #1f2937; /* Texte en gris foncé */
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+
+
     model = load_model()
-    st.title("📂 Assistant d'Appels d'Offres")
+    
+    col_titre, col_logo = st.columns([0.85, 0.15])
+    with col_titre:
+        st.title("📂 Assistant d'Appels d'Offres")
+    with col_logo:
+        if os.path.exists("tec.png"):
+            st.image("tec.png", width=120)
+
     os.makedirs(FILES_DIRECTORY, exist_ok=True)
     
     with weaviate.connect_to_local(port=8080, grpc_port=50051) as client:
-        # Section 1: Télécharger et remplacer
         st.header("1. Ajouter ou Remplacer un appel d'offres")
         lien_initial_utilisateur = st.text_input(
             "Collez le lien de la consultation ici :",
-            "https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseDetailsConsultation&refConsultation=911673&orgAcronyme=g8e"
+            "https://www.marchespublics.gov.ma/index.php?page=entreprise.EntrepriseDetailsConsultation&refConsultation=908012&orgAcronyme=g8e",
+            label_visibility="collapsed"
         )
-        if st.button("Télécharger, Remplacer et Indexer"):
+        if st.button("Lancer le Traitement"):
             if lien_initial_utilisateur and "entreprise.EntrepriseDetailsConsultation" in lien_initial_utilisateur:
                 telecharger_et_indexer_dossier(lien_initial_utilisateur, client, model)
             else:
@@ -205,20 +299,25 @@ try:
         
         st.divider()
 
-        # Section 2: État de la base de données
-        with st.expander("Voir l'état de la base de données"):
+        st.header("📊 État de la base de données")
+        col1, col2 = st.columns(2)
+        
+        with col1:
             fichiers_supportes = [f for f in os.listdir(FILES_DIRECTORY) if f.lower().endswith((".pdf", ".docx", ".xlsx", ".xls"))]
-            st.info(f"{len(fichiers_supportes)} fichier(s) supporté(s) dans le dossier local.")
+            st.metric(label="� Fichiers Locaux", value=len(fichiers_supportes))
+
+        with col2:
+            total_paragraphs = 0
             if client.collections.exists(CLASS_NAME):
                 doc_collection = client.collections.get(CLASS_NAME)
                 response = doc_collection.aggregate.over_all(total_count=True)
-                st.info(f"{response.total_count} paragraphes au total dans Weaviate.")
+                total_paragraphs = response.total_count
+            st.metric(label="✍️ Paragraphes dans Weaviate", value=total_paragraphs)
         
         st.divider()
 
-        # Section 3: Recherche Sémantique
         st.header("2. Rechercher dans les documents")
-        requete_utilisateur = st.text_input("Que cherchez-vous ?", "Fourniture de bureau")
+        requete_utilisateur = st.text_input("Que cherchez-vous ?", "Fourniture de bureau", label_visibility="collapsed")
         if st.button("Lancer la recherche"):
             if requete_utilisateur and client.collections.exists(CLASS_NAME):
                 vecteur_requete = model.encode(requete_utilisateur).tolist()
