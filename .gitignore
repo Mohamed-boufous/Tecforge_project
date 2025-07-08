@@ -4,5 +4,5 @@ __pycache__/
 .env
 resultats_uniques.json
 weaviate_data/
-pdfs/
+documents/
 consultations.db
