@@ -13,10 +13,26 @@ import docx
 import pandas as pd
 import shutil
 
+# AJOUT : Imports nécessaires pour Tesseract OCR
+from PIL import Image
+import pytesseract
+from pdf2image import convert_from_path
+
 # --- Configuration ---
 NOM_DU_MODELE_DE_VECTEUR = 'BAAI/bge-base-en-v1.5'
 CLASS_NAME = "DocumentParagraph"
 FILES_DIRECTORY = os.path.join(os.path.dirname(__file__), "documents")
+
+# --- Configuration des outils externes (Tesseract et Poppler) ---
+
+# AJOUT : Chemin vers l'exécutable Tesseract (ESSENTIEL POUR WINDOWS)
+# Cette ligne indique à Python où trouver Tesseract.
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+# AJOUT : Chemin vers le dossier 'bin' de Poppler (ESSENTIEL POUR WINDOWS)
+# Cette ligne indique où trouver Poppler pour convertir les PDF en images.
+POPPLER_PATH = r"C:\poppler-24.02.0\Library\bin"
+
 
 # --- Fonctions Utilitaires ---
 
@@ -33,20 +49,41 @@ def generer_liens(lien_initial: str):
     lien_final = lien_final.replace("orgAcronyme=", "orgAcronym=")
     return lien_final
 
-# --- Fonctions d'Extraction de Texte ---
+# --- Fonctions d'Extraction de Texte (avec OCR) ---
+
+def extraire_texte_images_pdf_ocr(chemin_fichier):
+    """
+    AJOUT : Nouvelle fonction qui utilise Tesseract pour extraire le texte des pages d'un PDF.
+    """
+    texte_ocr = ""
+    st.info(f"Tentative d'OCR sur {os.path.basename(chemin_fichier)}...")
+    try:
+        images = convert_from_path(chemin_fichier, poppler_path=POPPLER_PATH)
+        for img in images:
+            texte_ocr += pytesseract.image_to_string(img, lang='fra') + "\n"
+    except Exception as e:
+        st.error(f"Erreur OCR sur le fichier {os.path.basename(chemin_fichier)}: {e}")
+    return texte_ocr
 
 def extraire_texte_pdf(chemin_fichier):
-    texte = ""
+    """
+    MODIFIÉ : Tente d'abord une lecture normale. Si elle échoue, utilise l'OCR.
+    """
+    texte_normal = ""
     try:
         with open(chemin_fichier, "rb") as f:
             reader = PdfReader(f)
             for page in reader.pages:
                 contenu = page.extract_text()
                 if contenu:
-                    texte += contenu + "\n"
+                    texte_normal += contenu + "\n"
     except Exception as e:
         st.warning(f"Erreur de lecture PDF pour {os.path.basename(chemin_fichier)}: {e}")
-    return texte
+    
+    if len(texte_normal.strip()) < 100:
+        return extraire_texte_images_pdf_ocr(chemin_fichier)
+    else:
+        return texte_normal
 
 def extraire_texte_docx(chemin_fichier):
     try:
@@ -72,6 +109,7 @@ def extraire_texte_fichier(chemin_fichier):
     """Choisit la bonne fonction d'extraction selon l'extension du fichier."""
     extension = os.path.splitext(chemin_fichier)[1].lower()
     if extension == ".pdf":
+        # Cette fonction appelle maintenant la version avec OCR si nécessaire.
         return extraire_texte_pdf(chemin_fichier)
     elif extension == ".docx":
         return extraire_texte_docx(chemin_fichier)
@@ -155,24 +193,14 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
             response = requests.get(url_dossier, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
             response.raise_for_status()
             
-            # MODIFIÉ : Étape 3 - Décompression intelligente pour éviter les sous-dossiers.
+            # Étape 3 : Décompression intelligente.
             status.update(label="📦 Décompression des fichiers...")
             with zipfile.ZipFile(io.BytesIO(response.content), 'r') as zip_ref:
                 for member in zip_ref.infolist():
-                    # Ne pas traiter les dossiers contenus dans le ZIP
-                    if member.is_dir():
-                        continue
-                    
-                    # Extraire seulement le nom du fichier, en ignorant les dossiers parents de l'archive
+                    if member.is_dir(): continue
                     file_name = os.path.basename(member.filename)
-                    
-                    if not file_name:
-                        continue
-
-                    # Créer le chemin de destination final directement dans le dossier 'documents'
+                    if not file_name: continue
                     target_path = os.path.join(FILES_DIRECTORY, file_name)
-                    
-                    # Ouvrir le fichier source dans le ZIP et le copier dans la destination
                     with zip_ref.open(member, 'r') as source, open(target_path, 'wb') as target:
                         shutil.copyfileobj(source, target)
             
@@ -208,70 +236,67 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
 # --- Application Streamlit ---
 try:
     st.set_page_config(layout="wide", page_title="Assistant AO")
-    
     st.markdown("""
-        <style>
-        /* Style général des titres */
-        h1, h2 {
-            color: #1e3a8a; /* Bleu foncé */
-            font-weight: bold;
-        }
+            <style>
+            /* Style général des titres */
+            h1, h2 {
+                color: #1e3a8a; /* Bleu foncé */
+                font-weight: bold;
+            }
 
-        /* Style pour centrer les boutons */
-        .stButton {
-            display: flex;
-            justify-content: center;
-            margin-top: 1rem;
-            margin-bottom: 1rem;
-        }
+            /* Style pour centrer les boutons */
+            .stButton {
+                display: flex;
+                justify-content: center;
+                margin-top: 1rem;
+                margin-bottom: 1rem;
+            }
 
-        .stButton > button {
-            background-color: #000000; /* Noir */
-            color: white;
-            border-radius: 8px;
-            border: none;
-            padding: 10px 24px;
-            font-weight: bold;
-            transition: color 0.2s, background-color 0.2s; /* Transition douce pour les deux propriétés */
-        }
+            .stButton > button {
+                background-color: #000000; /* Noir */
+                color: white;
+                border-radius: 8px;
+                border: none;
+                padding: 10px 24px;
+                font-weight: bold;
+                transition: color 0.2s, background-color 0.2s; /* Transition douce pour les deux propriétés */
+            }
 
-        .stButton > button:hover {
-            background-color: #333333; /* Gris foncé au survol */
-            /* MODIFIÉ : Le texte devient vert au survol */
-            color: #22c55e; 
-        }
+            .stButton > button:hover {
+                background-color: #333333; /* Gris foncé au survol */
+                /* MODIFIÉ : Le texte devient vert au survol */
+                color: #22c55e; 
+            }
 
-        /* MODIFIÉ : Style pour les conteneurs de métriques avec un fond neutre */
-        div[data-testid="stMetric"] {
-            background-color: #000000;  /* Fond blanc propre */
-            border: 1px solid #e0e0e0;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
-        }
-        
-        /* AJOUT : Style pour que seule la valeur de la métrique soit en vert */
-        div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
-            color: #16a34a; /* Vert pour la valeur (le chiffre) */
-        }
+            /* MODIFIÉ : Style pour les conteneurs de métriques avec un fond neutre */
+            div[data-testid="stMetric"] {
+                background-color: #000000;  /* Fond blanc propre */
+                border: 1px solid #e0e0e0;
+                padding: 20px;
+                border-radius: 10px;
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+            }
+            
+            /* AJOUT : Style pour que seule la valeur de la métrique soit en vert */
+            div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
+                color: #16a34a; /* Vert pour la valeur (le chiffre) */
+            }
 
-        /* AJOUT : Style pour que l'étiquette reste dans une couleur neutre */
-        div[data-testid="stMetric"] div[data-testid="stMetricLabel"] {
-            color: #4b5563; /* Gris pour l'étiquette (le texte) */
-        }
+            /* AJOUT : Style pour que l'étiquette reste dans une couleur neutre */
+            div[data-testid="stMetric"] div[data-testid="stMetricLabel"] {
+                color: #4b5563; /* Gris pour l'étiquette (le texte) */
+            }
 
-        /* Style pour les résultats de recherche */
-        div[data-testid="stInfo"] {
-            background-color: #eef2ff;
-            border-left: 5px solid #4f46e5;
-            padding: 1rem;
-            border-radius: 8px;
-            color: #1f2937; /* Texte en gris foncé */
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
-
+            /* Style pour les résultats de recherche */
+            div[data-testid="stInfo"] {
+                background-color: #eef2ff;
+                border-left: 5px solid #4f46e5;
+                padding: 1rem;
+                border-radius: 8px;
+                color: #1f2937; /* Texte en gris foncé */
+            }
+            </style>
+            """, unsafe_allow_html=True)
 
     model = load_model()
     
@@ -304,7 +329,7 @@ try:
         
         with col1:
             fichiers_supportes = [f for f in os.listdir(FILES_DIRECTORY) if f.lower().endswith((".pdf", ".docx", ".xlsx", ".xls"))]
-            st.metric(label="� Fichiers Locaux", value=len(fichiers_supportes))
+            st.metric(label="📄 Fichiers Locaux", value=len(fichiers_supportes))
 
         with col2:
             total_paragraphs = 0

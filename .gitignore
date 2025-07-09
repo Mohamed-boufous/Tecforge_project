@@ -3,6 +3,6 @@ __pycache__/
 *.pyc
 .env
 resultats_uniques.json
-weaviate_data/
+
 documents/
 consultations.db
