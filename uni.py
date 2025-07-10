@@ -18,6 +18,13 @@ from PIL import Image
 import pytesseract
 from pdf2image import convert_from_path
 from datetime import datetime, timezone
+from pathlib import Path # Ajouté pour gérer les chemins de fichiers facilement
+
+# --- NOUVEAU : Import pour la conversion .doc -> .docx (uniquement pour Windows) ---
+# Ce module permet de piloter des applications Windows comme Word
+if os.name == 'nt': # On importe ces modules seulement si on est sur Windows
+    import win32com.client as win32
+    import pythoncom # Ajouté pour corriger l'erreur CoInitialize
 
 # --- Configuration de la Page et des Outils ---
 st.set_page_config(layout="wide", page_title="Assistant d'Appels d'Offres")
@@ -30,7 +37,7 @@ FILES_DIRECTORY = os.path.join(os.path.dirname(__file__), "documents")
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 POPPLER_PATH = r"C:\poppler-24.02.0\Library\bin"
 
-# --- Fonctions ---
+# --- Fonctions (inchangées) ---
 
 @st.cache_resource
 def load_model():
@@ -82,7 +89,7 @@ def jours_restants(date_string):
             return "Terminé"
     except (ValueError, TypeError): return ""
 
-# --- Fonctions d'Extraction de Texte (avec OCR) ---
+# --- Fonctions d'Extraction de Texte (inchangées) ---
 
 def extraire_texte_images_pdf_ocr(chemin_fichier):
     texte_ocr = ""
@@ -132,9 +139,55 @@ def extraire_texte_fichier(chemin_fichier):
     else: return ""
 
 def decouper_texte(texte):
+    
+    """
+    Découpe un texte en paragraphes en se basant sur les sauts de ligne.
+    
+    Retourne une liste de paragraphes, où chaque paragraphe est une chaîne de caractères.
+    Les paragraphes vides sont ignorés.
+    """
+    
     return [p.strip() for p in texte.split("\n") if len(p.strip()) > 10]
 
-# --- Fonctions Weaviate et Workflow ---
+# --- Fonctions Weaviate et Workflow (avec ajouts) ---
+
+# --- NOUVEAU : Fonction pour convertir les .doc en .docx ---
+# --- NOUVEAU : Fonction pour convertir les .doc en .docx ---
+def convertir_doc_en_docx(dossier_path, status_placeholder):
+    """Convertit les .doc en .docx (Windows + Word requis) et supprime les originaux."""
+    if os.name != 'nt': 
+        status_placeholder.update(label="⚠️ Conversion .doc ignorée (non-Windows).")
+        time.sleep(2)
+        return
+
+    word = None
+    try:
+        # --- MODIFICATION : Ajout de l'initialisation pour la communication avec Word ---
+        pythoncom.CoInitialize() # Prépare la "poignée de main" avec Windows.
+        
+        fichiers_doc = [f for f in os.listdir(dossier_path) if f.lower().endswith(".doc")]
+        if not fichiers_doc: return 
+
+        status_placeholder.update(label=f"🔄 Conversion de {len(fichiers_doc)} fichier(s) .doc...")
+        word = win32.DispatchEx("Word.Application")
+        word.Visible = False
+
+        for nom_fichier in fichiers_doc:
+            chemin_doc = os.path.abspath(os.path.join(dossier_path, nom_fichier))
+            chemin_docx = os.path.abspath(os.path.join(dossier_path, Path(nom_fichier).stem + ".docx"))
+            
+            doc = word.Documents.Open(chemin_doc)
+            doc.SaveAs(chemin_docx, FileFormat=16) 
+            doc.Close()
+            os.remove(chemin_doc) 
+            
+    except Exception as e:
+        # La nouvelle erreur complète sera affichée pour un meilleur diagnostic.
+        st.warning(f"Erreur durant la conversion .doc : {e}. MS Word est-il bien installé ?")
+    finally:
+        if word: word.Quit()
+        # --- MODIFICATION : Ajout pour terminer proprement la communication ---
+        pythoncom.CoUninitialize() # Termine la "poignée de main".
 
 def traiter_fichier(client, chemin_fichier, model, progress_bar_placeholder):
     nom_fichier = os.path.basename(chemin_fichier)
@@ -162,6 +215,7 @@ def traiter_fichier(client, chemin_fichier, model, progress_bar_placeholder):
         doc_collection.data.insert_many(objects_to_insert)
         return len(objects_to_insert)
     return 0
+    
 def generer_liens(lien_initial: str):
     """Génère un lien de téléchargement à partir d'un lien de consultation."""
     lien_demande = lien_initial.replace("entreprise.EntrepriseDetailsConsultation", "entreprise.EntrepriseDemandeTelechargementDce")
@@ -169,6 +223,8 @@ def generer_liens(lien_initial: str):
     lien_final = lien_final.replace("refConsultation=", "reference=")
     lien_final = lien_final.replace("orgAcronyme=", "orgAcronym=")
     return lien_final
+
+# --- MODIFIÉ : Le workflow de téléchargement intègre la conversion ---
 def telecharger_et_indexer_dossier(lien_initial, client, model):
     with st.status("🚀 Démarrage du processus...", expanded=True) as status:
         try:
@@ -199,8 +255,12 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
                     with zip_ref.open(member, 'r') as source, open(target_path, 'wb') as target:
                         shutil.copyfileobj(source, target)
             
-            fichiers_extraits = os.listdir(FILES_DIRECTORY)
-            status.update(label=f"✨ {len(fichiers_extraits)} fichiers extraits.")
+            # --- MODIFICATION : Ajout de l'étape de conversion des fichiers .doc ---
+            convertir_doc_en_docx(FILES_DIRECTORY, status) # Appelle la nouvelle fonction de conversion.
+            # --- FIN DE LA MODIFICATION ---
+
+            fichiers_extraits = os.listdir(FILES_DIRECTORY) # Rafraîchit la liste des fichiers après la conversion.
+            status.update(label=f"✨ {len(fichiers_extraits)} fichiers prêts à être indexés.")
             time.sleep(1)
 
             total_paragraphes = 0
@@ -218,13 +278,11 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
             status.update(label=f"🎉 Processus terminé ! {total_paragraphes} paragraphes ont été indexés.", state="complete")
             st.balloons()
             time.sleep(2)
-            # MODIFIÉ : On ne change plus de vue automatiquement.
-            # L'application va se rafraîchir et afficher les nouvelles sections ci-dessous.
 
         except Exception as e:
             status.update(label=f"❌ Erreur critique : {e}", state="error")
 
-# --- Vues de l'Application ---
+# --- Vues de l'Application (inchangées) ---
 
 def display_list_view(data, filter_options):
     st.sidebar.header("🔎 Filtres")
@@ -317,19 +375,19 @@ def display_process_view(client, model):
     if st.button("Lancer le Traitement", type="primary"):
         if lien:
             telecharger_et_indexer_dossier(lien, client, model)
-            # MODIFIÉ : On rafraîchit la page pour afficher les nouvelles sections
             st.rerun()
         else:
             st.error("Aucun lien à traiter.")
             
     st.divider()
     
-    # --- AJOUT : État de la base de données et recherche ---
     st.header("📊 État de la base de données")
     col1, col2 = st.columns(2)
     
     with col1:
-        fichiers_supportes = [f for f in os.listdir(FILES_DIRECTORY) if f.lower().endswith((".pdf", ".docx", ".xlsx", ".xls"))]
+        fichiers_supportes = []
+        if os.path.exists(FILES_DIRECTORY):
+            fichiers_supportes = [f for f in os.listdir(FILES_DIRECTORY) if f.lower().endswith((".pdf", ".docx", ".xlsx", ".xls"))]
         st.metric(label="📄 Fichiers Locaux", value=len(fichiers_supportes))
 
     with col2:
