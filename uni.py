@@ -153,41 +153,7 @@ def decouper_texte(texte):
 
 # --- NOUVEAU : Fonction pour convertir les .doc en .docx ---
 # --- NOUVEAU : Fonction pour convertir les .doc en .docx ---
-def convertir_doc_en_docx(dossier_path, status_placeholder):
-    """Convertit les .doc en .docx (Windows + Word requis) et supprime les originaux."""
-    if os.name != 'nt': 
-        status_placeholder.update(label="⚠️ Conversion .doc ignorée (non-Windows).")
-        time.sleep(2)
-        return
 
-    word = None
-    try:
-        # --- MODIFICATION : Ajout de l'initialisation pour la communication avec Word ---
-        pythoncom.CoInitialize() # Prépare la "poignée de main" avec Windows.
-        
-        fichiers_doc = [f for f in os.listdir(dossier_path) if f.lower().endswith(".doc")]
-        if not fichiers_doc: return 
-
-        status_placeholder.update(label=f"🔄 Conversion de {len(fichiers_doc)} fichier(s) .doc...")
-        word = win32.DispatchEx("Word.Application")
-        word.Visible = False
-
-        for nom_fichier in fichiers_doc:
-            chemin_doc = os.path.abspath(os.path.join(dossier_path, nom_fichier))
-            chemin_docx = os.path.abspath(os.path.join(dossier_path, Path(nom_fichier).stem + ".docx"))
-            
-            doc = word.Documents.Open(chemin_doc)
-            doc.SaveAs(chemin_docx, FileFormat=16) 
-            doc.Close()
-            os.remove(chemin_doc) 
-            
-    except Exception as e:
-        # La nouvelle erreur complète sera affichée pour un meilleur diagnostic.
-        st.warning(f"Erreur durant la conversion .doc : {e}. MS Word est-il bien installé ?")
-    finally:
-        if word: word.Quit()
-        # --- MODIFICATION : Ajout pour terminer proprement la communication ---
-        pythoncom.CoUninitialize() # Termine la "poignée de main".
 
 def traiter_fichier(client, chemin_fichier, model, progress_bar_placeholder):
     nom_fichier = os.path.basename(chemin_fichier)
@@ -215,7 +181,43 @@ def traiter_fichier(client, chemin_fichier, model, progress_bar_placeholder):
         doc_collection.data.insert_many(objects_to_insert)
         return len(objects_to_insert)
     return 0
-    
+# --- MODIFIÉ : La fonction convertit maintenant les .doc ET les .rtf en .docx ---
+def convertir_vers_docx(dossier_path, status_placeholder):
+    """Convertit les .doc et .rtf en .docx (Windows + Word requis) et supprime les originaux."""
+    if os.name != 'nt': 
+        status_placeholder.update(label="⚠️ Conversion .doc/.rtf ignorée (non-Windows).")
+        time.sleep(2)
+        return
+
+    word = None
+    try:
+        pythoncom.CoInitialize()
+        
+        # MODIFICATION : Recherche les fichiers se terminant par .doc ou .rtf.
+        extensions_a_convertir = (".doc", ".rtf")
+        fichiers_a_convertir = [f for f in os.listdir(dossier_path) if f.lower().endswith(extensions_a_convertir)]
+        
+        if not fichiers_a_convertir: return 
+
+        # Le message est maintenant plus générique.
+        status_placeholder.update(label=f"🔄 Conversion de {len(fichiers_a_convertir)} fichier(s) Word...")
+        word = win32.DispatchEx("Word.Application")
+        word.Visible = False
+
+        for nom_fichier in fichiers_a_convertir:
+            chemin_original = os.path.abspath(os.path.join(dossier_path, nom_fichier))
+            chemin_docx = os.path.abspath(os.path.join(dossier_path, Path(nom_fichier).stem + ".docx"))
+            
+            doc = word.Documents.Open(chemin_original)
+            doc.SaveAs(chemin_docx, FileFormat=16) 
+            doc.Close()
+            os.remove(chemin_original) # Supprime le fichier .doc ou .rtf original
+            
+    except Exception as e:
+        st.warning(f"Erreur durant la conversion de documents : {e}. MS Word est-il bien installé ?")
+    finally:
+        if word: word.Quit()
+        pythoncom.CoUninitialize()
 def generer_liens(lien_initial: str):
     """Génère un lien de téléchargement à partir d'un lien de consultation."""
     lien_demande = lien_initial.replace("entreprise.EntrepriseDetailsConsultation", "entreprise.EntrepriseDemandeTelechargementDce")
@@ -232,7 +234,10 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
             if client.collections.exists(CLASS_NAME): client.collections.delete(CLASS_NAME)
             client.collections.create(
                 name=CLASS_NAME,
-                properties=[wvc.Property(name="content", data_type=wvc.DataType.TEXT), wvc.Property(name="source", data_type=wvc.DataType.TEXT)],
+                properties=[
+                    wvc.Property(name="content", data_type=wvc.DataType.TEXT),
+                    wvc.Property(name="source", data_type=wvc.DataType.TEXT)
+                ],
                 vectorizer_config=wvc.Configure.Vectorizer.none()
             )
             if os.path.exists(FILES_DIRECTORY): shutil.rmtree(FILES_DIRECTORY)
@@ -255,8 +260,8 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
                     with zip_ref.open(member, 'r') as source, open(target_path, 'wb') as target:
                         shutil.copyfileobj(source, target)
             
-            # --- MODIFICATION : Ajout de l'étape de conversion des fichiers .doc ---
-            convertir_doc_en_docx(FILES_DIRECTORY, status) # Appelle la nouvelle fonction de conversion.
+            # --- MODIFICATION : Appel de la fonction qui convertit les .doc ET .rtf ---
+            convertir_vers_docx(FILES_DIRECTORY, status)
             # --- FIN DE LA MODIFICATION ---
 
             fichiers_extraits = os.listdir(FILES_DIRECTORY) # Rafraîchit la liste des fichiers après la conversion.
@@ -278,6 +283,8 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
             status.update(label=f"🎉 Processus terminé ! {total_paragraphes} paragraphes ont été indexés.", state="complete")
             st.balloons()
             time.sleep(2)
+            
+            st.rerun() # Rafraîchit l'interface pour afficher les résultats.
 
         except Exception as e:
             status.update(label=f"❌ Erreur critique : {e}", state="error")
