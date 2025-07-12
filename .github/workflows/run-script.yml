@@ -28,7 +28,8 @@ jobs:
 
     # Étape 3: Installe les bibliothèques de votre fichier requirements.txt
     - name: Install dependencies
-      run: pip install -r safakate_render/requirements.txt
+      # MODIFIÉ: On utilise le bon nom de dossier "renderScript"
+      run: pip install -r renderScript/requirements.txt
 
     # Étape 4: Exécute votre script Python
     - name: Run the python script
@@ -37,4 +38,5 @@ jobs:
         EMAIL: ${{ secrets.EMAIL }}
         PASSWORD: ${{ secrets.PASSWORD }}
         MONGO_URI: ${{ secrets.MONGO_URI }}
-      run: python safakate_render/main.py
+      # MODIFIÉ: On exécute le script depuis le bon dossier "renderScript"
+      run: python renderScript/main.py
