@@ -1,0 +1,40 @@
+# Nom de votre action, visible dans l'onglet "Actions" de GitHub
+name: Recuperer les donnees Safakate
+
+# Déclencheur de l'action
+on:
+  schedule:
+    # Ceci est la syntaxe CRON pour "toutes les heures, à la minute 0"
+    - cron: '0 * * * *'
+  # Permet aussi de lancer l'action manuellement depuis l'onglet Actions
+  workflow_dispatch:
+
+# Les tâches à exécuter
+jobs:
+  build:
+    # Le type de machine virtuelle à utiliser
+    runs-on: ubuntu-latest
+
+    steps:
+    # Étape 1: Récupère le code de votre dépôt
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # Étape 2: Installe Python
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10' # Vous pouvez utiliser une version récente de Python
+
+    # Étape 3: Installe les bibliothèques de votre fichier requirements.txt
+    - name: Install dependencies
+      run: pip install -r safakate_render/requirements.txt
+
+    # Étape 4: Exécute votre script Python
+    - name: Run the python script
+      # C'est ici qu'on passe les secrets à votre script
+      env:
+        EMAIL: ${{ secrets.EMAIL }}
+        PASSWORD: ${{ secrets.PASSWORD }}
+        MONGO_URI: ${{ secrets.MONGO_URI }}
+      run: python safakate_render/main.py
