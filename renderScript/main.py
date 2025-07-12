@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 from pymongo import MongoClient, UpdateOne
-import certifi # MODIFIÉ : On importe la bibliothèque de certificats
+import certifi # On importe la bibliothèque de certificats
 
 # --- Configuration initiale ---
 load_dotenv()
@@ -50,9 +50,9 @@ def generer_liens(lien_initial):
 def save_to_mongodb(data_list):
     print(f"Connexion à MongoDB pour sauvegarder {len(data_list)} consultations...")
     
-    # MODIFIÉ : On ajoute l'option 'tlsCAFile' pour fournir les certificats SSL.
-    # C'est la correction pour l'erreur "SSL handshake failed".
-    client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
+    # MODIFIÉ : On force l'utilisation de TLS et on spécifie les certificats.
+    # C'est une correction plus robuste pour l'erreur "SSL handshake failed".
+    client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where())
     
     db = client.safakate_db 
     collection = db.consultations
