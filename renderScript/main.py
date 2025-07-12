@@ -53,29 +53,66 @@ def generer_liens(lien_initial):
 # --- NOUVELLE FONCTION POUR SAUVEGARDER DANS MONGODB ---
 
 def save_to_mongodb(data_list):
-    """
-    Se connecte à MongoDB et sauvegarde la liste des consultations.
-    Ceci remplace la sauvegarde en base de données SQLite et en fichier JSON.
-    """
     print(f"Connexion à MongoDB pour sauvegarder {len(data_list)} consultations...")
     
-    # Étape 1 : Connexion au cluster
-    # Le script utilise la variable MONGO_URI que vous avez mise sur Render.
-    client = MongoClient(MONGO_URI)
+    # Configuration MongoDB plus robuste pour GitHub Actions
+    try:
+        # Option 1: Configuration complète avec tous les paramètres SSL
+        client = MongoClient(
+            MONGO_URI, 
+            tls=True,
+            tlsCAFile=certifi.where(),
+            tlsAllowInvalidCertificates=False,
+            tlsAllowInvalidHostnames=False,
+            retryWrites=True,
+            w='majority',
+            serverSelectionTimeoutMS=30000,
+            socketTimeoutMS=20000,
+            connectTimeoutMS=20000,
+            maxPoolSize=10,
+            minPoolSize=1
+        )
+        
+        # Test de la connexion
+        client.admin.command('ping')
+        print("Connexion MongoDB établie avec succès.")
+        
+    except Exception as e:
+        print(f"Erreur avec la configuration SSL complète: {e}")
+        
+        # Option 2: Fallback - Configuration simplifiée
+        try:
+            client = MongoClient(
+                MONGO_URI,
+                ssl=True,
+                ssl_cert_reqs='CERT_REQUIRED',
+                ssl_ca_certs=certifi.where(),
+                serverSelectionTimeoutMS=30000,
+                socketTimeoutMS=20000,
+                connectTimeoutMS=20000
+            )
+            
+            client.admin.command('ping')
+            print("Connexion MongoDB établie avec configuration simplifiée.")
+            
+        except Exception as e2:
+            print(f"Erreur avec la configuration simplifiée: {e2}")
+            
+            # Option 3: Last resort - Configuration minimale
+            try:
+                client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=30000)
+                client.admin.command('ping')
+                print("Connexion MongoDB établie avec configuration minimale.")
+                
+            except Exception as e3:
+                print(f"Impossible de se connecter à MongoDB: {e3}")
+                return
     
-    # Étape 2 : Sélection de la base de données et de la collection
-    # Vous pouvez changer ces noms si vous le souhaitez.
     db = client.safakate_db 
     collection = db.consultations
 
-    # Étape 3 : Préparation des opérations d'écriture
-    # On utilise une méthode optimisée (bulk_write) pour tout insérer/mettre à jour d'un coup.
     operations = []
     for item in data_list:
-        # Pour chaque consultation, on crée une opération "UpdateOne".
-        # Le filtre {"_id": item.get("consId")} cherche un document avec cet ID.
-        # L'opérateur "$set" met à jour le document avec les nouvelles données.
-        # "upsert=True" est la clé : si le document n'existe pas, il sera créé.
         op = UpdateOne(
             {"_id": item.get("consId")}, 
             {"$set": item},             
@@ -83,9 +120,9 @@ def save_to_mongodb(data_list):
         )
         operations.append(op)
 
-    # Étape 4 : Exécution des opérations
     if not operations:
         print("Aucune donnée à sauvegarder.")
+        client.close()
         return
 
     try:
@@ -96,8 +133,7 @@ def save_to_mongodb(data_list):
     except Exception as e:
         print(f"Une erreur est survenue lors de la sauvegarde dans MongoDB : {e}")
     finally:
-        client.close() # On ferme la connexion
-
+        client.close()
 # --- SCRIPT PRINCIPAL ---
 
 def main():
