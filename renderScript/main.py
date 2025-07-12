@@ -3,22 +3,20 @@ import requests
 import time
 from datetime import datetime
 from dotenv import load_dotenv
-from pymongo import MongoClient, UpdateOne # MODIFIÉ: On importe le client MongoDB et l'opération de mise à jour
+from pymongo import MongoClient, UpdateOne
+import certifi # On importe la bibliothèque de certificats
 
 # --- Configuration initiale ---
 load_dotenv()
 
-# On récupère les 3 secrets depuis les variables d'environnement
 EMAIL = os.getenv("EMAIL")
 PASSWORD = os.getenv("PASSWORD")
-MONGO_URI = os.getenv("MONGO_URI") # MODIFIÉ: Ajout de la variable pour la connexion à MongoDB
+MONGO_URI = os.getenv("MONGO_URI")
 
 BASE_URL = "https://app.safakate.com/api/allcons/consultations"
 
 # --- Fonctions API (inchangées) ---
-
 def login(email, password):
-    """Se connecte et récupère les cookies d'authentification."""
     login_url = "https://app.safakate.com/api/authentication/login"
     payload = {"email": email, "password": password}
     try:
@@ -32,7 +30,6 @@ def login(email, password):
         return None
 
 def build_headers(cookies):
-    """Construit les en-têtes pour les requêtes API."""
     return {
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json, text/plain, */*",
@@ -40,7 +37,6 @@ def build_headers(cookies):
     }
 
 def generer_liens(lien_initial):
-    """Génère l'URL de téléchargement direct."""
     if not lien_initial: return ""
     return lien_initial.replace(
         "entreprise.EntrepriseDetailsConsultation", "entreprise.EntrepriseDownloadCompleteDce"
@@ -50,63 +46,15 @@ def generer_liens(lien_initial):
         "orgAcronyme=", "orgAcronym="
     )
 
-# --- NOUVELLE FONCTION POUR SAUVEGARDER DANS MONGODB ---
-
+# --- Fonction de sauvegarde (MODIFIÉE) ---
 def save_to_mongodb(data_list):
     print(f"Connexion à MongoDB pour sauvegarder {len(data_list)} consultations...")
     
-    # Configuration MongoDB plus robuste pour GitHub Actions
-    try:
-        # Option 1: Configuration complète avec tous les paramètres SSL
-        client = MongoClient(
-            MONGO_URI, 
-            tls=True,
-            tlsCAFile=certifi.where(),
-            tlsAllowInvalidCertificates=False,
-            tlsAllowInvalidHostnames=False,
-            retryWrites=True,
-            w='majority',
-            serverSelectionTimeoutMS=30000,
-            socketTimeoutMS=20000,
-            connectTimeoutMS=20000,
-            maxPoolSize=10,
-            minPoolSize=1
-        )
-        
-        # Test de la connexion
-        client.admin.command('ping')
-        print("Connexion MongoDB établie avec succès.")
-        
-    except Exception as e:
-        print(f"Erreur avec la configuration SSL complète: {e}")
-        
-        # Option 2: Fallback - Configuration simplifiée
-        try:
-            client = MongoClient(
-                MONGO_URI,
-                ssl=True,
-                ssl_cert_reqs='CERT_REQUIRED',
-                ssl_ca_certs=certifi.where(),
-                serverSelectionTimeoutMS=30000,
-                socketTimeoutMS=20000,
-                connectTimeoutMS=20000
-            )
-            
-            client.admin.command('ping')
-            print("Connexion MongoDB établie avec configuration simplifiée.")
-            
-        except Exception as e2:
-            print(f"Erreur avec la configuration simplifiée: {e2}")
-            
-            # Option 3: Last resort - Configuration minimale
-            try:
-                client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=30000)
-                client.admin.command('ping')
-                print("Connexion MongoDB établie avec configuration minimale.")
-                
-            except Exception as e3:
-                print(f"Impossible de se connecter à MongoDB: {e3}")
-                return
+    # LIGNE MODIFIÉE : On ajoute des options robustes pour la connexion SSL et un timeout plus long.
+    # tls=True : Force la connexion sécurisée.
+    # tlsCAFile=certifi.where() : Indique où trouver les certificats de confiance.
+    # serverSelectionTimeoutMS=60000 : Donne 60 secondes au script pour trouver un serveur, ce qui aide sur les réseaux lents.
+    client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where(), serverSelectionTimeoutMS=60000)
     
     db = client.safakate_db 
     collection = db.consultations
@@ -134,10 +82,9 @@ def save_to_mongodb(data_list):
         print(f"Une erreur est survenue lors de la sauvegarde dans MongoDB : {e}")
     finally:
         client.close()
-# --- SCRIPT PRINCIPAL ---
 
+# --- Script principal (inchangé) ---
 def main():
-    """Fonction principale qui orchestre tout le processus."""
     cookies = login(EMAIL, PASSWORD)
     if not cookies:
         print("Échec de la connexion. Arrêt du script.")
@@ -147,11 +94,10 @@ def main():
     all_results = []
     seen_ids = set()
     offset = 0
-    limit = 20 # On peut prendre des pages plus grandes
+    limit = 20
     total_count = None
 
     while True:
-        # ... (la logique de récupération des données reste la même)
         params = {
             "offset": offset, "limit": limit, "sort": "publishedDate",
             "sortDirection": "DESC", "state": "En cours",
@@ -190,14 +136,13 @@ def main():
             if len(all_results) >= total_count:
                 break
             
-            offset += limit # CORRIGÉ: On incrémente par la taille de la page, pas par 1
+            offset += limit
             time.sleep(0.5)
 
         except Exception as e:
             print(f"Une erreur est survenue pendant la récupération : {e}")
             break
 
-    # MODIFIÉ : Au lieu d'écrire dans un fichier, on appelle la fonction de sauvegarde MongoDB
     if all_results:
         save_to_mongodb(all_results)
 
