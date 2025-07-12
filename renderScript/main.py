@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 from pymongo import MongoClient, UpdateOne
-import certifi # On importe la bibliothèque de certificats
+import certifi
 
 # --- Configuration initiale ---
 load_dotenv()
@@ -15,7 +15,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 
 BASE_URL = "https://app.safakate.com/api/allcons/consultations"
 
-# --- Fonctions API (inchangées) ---
+# --- Fonctions API ---
 def login(email, password):
     login_url = "https://app.safakate.com/api/authentication/login"
     payload = {"email": email, "password": password}
@@ -46,44 +46,50 @@ def generer_liens(lien_initial):
         "orgAcronyme=", "orgAcronym="
     )
 
-# --- Fonction de sauvegarde (MODIFIÉE) ---
+# --- Fonction de sauvegarde dans MongoDB ---
 def save_to_mongodb(data_list):
     print(f"Connexion à MongoDB pour sauvegarder {len(data_list)} consultations...")
-    
-    # LIGNE MODIFIÉE : On ajoute des options robustes pour la connexion SSL et un timeout plus long.
-    # tls=True : Force la connexion sécurisée.
-    # tlsCAFile=certifi.where() : Indique où trouver les certificats de confiance.
-    # serverSelectionTimeoutMS=60000 : Donne 60 secondes au script pour trouver un serveur, ce qui aide sur les réseaux lents.
-    client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where(), serverSelectionTimeoutMS=60000)
-    
-    db = client.safakate_db 
-    collection = db.consultations
-
-    operations = []
-    for item in data_list:
-        op = UpdateOne(
-            {"_id": item.get("consId")}, 
-            {"$set": item},             
-            upsert=True                 
-        )
-        operations.append(op)
-
-    if not operations:
-        print("Aucune donnée à sauvegarder.")
-        client.close()
-        return
-
+    client = None
     try:
+        # On utilise la configuration qui a fonctionné, avec un timeout plus long.
+        client = MongoClient(
+            MONGO_URI,
+            tls=True,
+            tlsCAFile=certifi.where(),
+            serverSelectionTimeoutMS=60000
+        )
+        # On teste la connexion avant de continuer
+        client.admin.command('ping')
+        print("Connexion MongoDB établie.")
+        
+        db = client.safakate_db 
+        collection = db.consultations
+
+        operations = []
+        for item in data_list:
+            op = UpdateOne(
+                {"_id": item.get("consId")}, 
+                {"$set": item},             
+                upsert=True                 
+            )
+            operations.append(op)
+
+        if not operations:
+            print("Aucune donnée à sauvegarder.")
+            return
+
         result = collection.bulk_write(operations)
         print("Sauvegarde dans MongoDB terminée.")
         print(f"  - Consultations créées : {result.upserted_count}")
         print(f"  - Consultations mises à jour : {result.modified_count}")
+        
     except Exception as e:
-        print(f"Une erreur est survenue lors de la sauvegarde dans MongoDB : {e}")
+        print(f"Une erreur est survenue avec MongoDB : {e}")
     finally:
-        client.close()
+        if client:
+            client.close()
 
-# --- Script principal (inchangé) ---
+# --- Script principal (MODIFIÉ) ---
 def main():
     cookies = login(EMAIL, PASSWORD)
     if not cookies:
@@ -93,24 +99,34 @@ def main():
     headers = build_headers(cookies)
     all_results = []
     seen_ids = set()
-    offset = 0
-    limit = 20
+    
+    # MODIFIÉ: On utilise un numéro de page au lieu d'un offset.
+    # C'est la correction principale pour parcourir tous les résultats.
+    page = 0
+    limit = 20 # On peut toujours demander 20 résultats par page.
     total_count = None
+    
+    max_retries = 3
+    retry_count = 0
 
     while True:
+        # MODIFIÉ: Le paramètre 'offset' est maintenant notre numéro de page.
         params = {
-            "offset": offset, "limit": limit, "sort": "publishedDate",
-            "sortDirection": "DESC", "state": "En cours",
+            "offset": page, 
+            "limit": limit, 
+            "sort": "publishedDate",
+            "sortDirection": "DESC", 
+            "state": "En cours",
             "dateLimitStart": datetime.now().strftime("%Y-%m-%dT00:00:00.000Z"),
         }
         try:
-            response = requests.get(BASE_URL, headers=headers, params=params, timeout=20)
+            response = requests.get(BASE_URL, headers=headers, params=params, timeout=30)
             if response.status_code == 401:
                 print("Session expirée, reconnexion...")
                 cookies = login(EMAIL, PASSWORD)
                 if not cookies: break
                 headers = build_headers(cookies)
-                response = requests.get(BASE_URL, headers=headers, params=params, timeout=20)
+                response = requests.get(BASE_URL, headers=headers, params=params, timeout=30)
             
             response.raise_for_status()
             data = response.json()
@@ -120,8 +136,9 @@ def main():
                 total_count = data.get("total", 0)
                 print(f"Total des consultations à traiter : {total_count}")
 
-            if not results_on_page:
-                print("Fin de la récupération des données de l'API.")
+            # Si une page est vide (et ce n'est pas la première), on a probablement fini.
+            if not results_on_page and page > 0: 
+                print("Fin de la récupération des données de l'API (page vide).")
                 break
 
             for item in results_on_page:
@@ -133,18 +150,31 @@ def main():
             
             print(f"Progression : {len(all_results)} / {total_count} consultations collectées.")
             
-            if len(all_results) >= total_count:
+            retry_count = 0
+            
+            # La condition de sortie la plus fiable est de comparer avec le total.
+            if total_count is not None and len(all_results) >= total_count:
+                print("Toutes les consultations ont été collectées.")
                 break
             
-            offset += limit
+            # MODIFIÉ: On passe à la page suivante.
+            page += 1
             time.sleep(0.5)
 
         except Exception as e:
-            print(f"Une erreur est survenue pendant la récupération : {e}")
-            break
+            retry_count += 1
+            print(f"Une erreur est survenue pendant la récupération (tentative {retry_count}/{max_retries}): {e}")
+            if retry_count >= max_retries:
+                print("Nombre maximum de tentatives atteint. Arrêt de la récupération.")
+                break
+            
+            print("Nouvelle tentative dans 5 secondes...")
+            time.sleep(5)
 
     if all_results:
         save_to_mongodb(all_results)
+    else:
+        print("Aucune donnée n'a été collectée pour la sauvegarde.")
 
     print("Processus terminé.")
 
