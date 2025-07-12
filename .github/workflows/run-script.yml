@@ -4,8 +4,8 @@ name: Recuperer les donnees Safakate
 # Déclencheur de l'action
 on:
   schedule:
-    # Ceci est la syntaxe CRON pour "toutes les heures, à la minute 0"
-    - cron: '0 * * * *'
+    # MODIFIÉ : Exécute le script tous les jours à minuit (00:00) UTC.
+    - cron: '0 0 * * *'
   # Permet aussi de lancer l'action manuellement depuis l'onglet Actions
   workflow_dispatch:
 
@@ -24,11 +24,10 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10' # Vous pouvez utiliser une version récente de Python
+        python-version: '3.10'
 
     # Étape 3: Installe les bibliothèques de votre fichier requirements.txt
     - name: Install dependencies
-      # MODIFIÉ: On utilise le bon nom de dossier "renderScript"
       run: pip install -r renderScript/requirements.txt
 
     # Étape 4: Exécute votre script Python
@@ -38,5 +37,4 @@ jobs:
         EMAIL: ${{ secrets.EMAIL }}
         PASSWORD: ${{ secrets.PASSWORD }}
         MONGO_URI: ${{ secrets.MONGO_URI }}
-      # MODIFIÉ: On exécute le script depuis le bon dossier "renderScript"
       run: python renderScript/main.py
