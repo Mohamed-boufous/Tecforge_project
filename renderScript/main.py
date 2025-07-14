@@ -112,13 +112,19 @@ def main():
     while True:
         # MODIFIÉ: Le paramètre 'offset' est maintenant notre numéro de page.
         params = {
-            "offset": page, 
-            "limit": limit, 
-            "sort": "publishedDate",
-            "sortDirection": "DESC", 
-            "state": "En cours",
-            "dateLimitStart": datetime.now().strftime("%Y-%m-%dT00:00:00.000Z"),
-        }
+        "offset": page,
+        "limit": limit,
+        "searchObjet": "",
+        "mosearch": "",
+        "dateLimitStart": datetime.now().strftime("%Y-%m-%dT09:00:00.000Z"),
+        "sort": "publishedDate",
+        "sortDirection": "DESC",
+        "state": "En cours",
+        "minCaution": 0,
+        "maxCaution": 0,
+        "minEstimation": 0,
+        "maxEstimation": 0
+    }
         try:
             response = requests.get(BASE_URL, headers=headers, params=params, timeout=30)
             if response.status_code == 401:

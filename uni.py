@@ -18,13 +18,17 @@ from PIL import Image
 import pytesseract
 from pdf2image import convert_from_path
 from datetime import datetime, timezone
-from pathlib import Path # Ajouté pour gérer les chemins de fichiers facilement
+from pathlib import Path
+
+# --- MODIFIÉ : Ajouts pour la connexion à MongoDB ---
+from pymongo import MongoClient # Permet de se connecter à MongoDB.
+import certifi # Fournit les certificats de sécurité pour la connexion.
+from dotenv import load_dotenv # Permet de lire les secrets depuis le fichier .env.
 
 # --- NOUVEAU : Import pour la conversion .doc -> .docx (uniquement pour Windows) ---
-# Ce module permet de piloter des applications Windows comme Word
-if os.name == 'nt': # On importe ces modules seulement si on est sur Windows
+if os.name == 'nt':
     import win32com.client as win32
-    import pythoncom # Ajouté pour corriger l'erreur CoInitialize
+    import pythoncom
 
 # --- Configuration de la Page et des Outils ---
 st.set_page_config(layout="wide", page_title="Assistant d'Appels d'Offres")
@@ -33,40 +37,64 @@ NOM_DU_MODELE_DE_VECTEUR = 'BAAI/bge-base-en-v1.5'
 CLASS_NAME = "DocumentParagraph"
 FILES_DIRECTORY = os.path.join(os.path.dirname(__file__), "documents")
 
-# Configuration de Tesseract et Poppler (essentiel pour Windows)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 POPPLER_PATH = r"C:\poppler-24.02.0\Library\bin"
 
-# --- Fonctions (inchangées) ---
+# --- Fonctions ---
 
 @st.cache_resource
 def load_model():
     """Charge le modèle de vectorisation une seule fois."""
     return SentenceTransformer(NOM_DU_MODELE_DE_VECTEUR)
 
-@st.cache_data
-def load_and_prepare_data(file_path):
-    """Charge les données JSON et prépare les listes pour les filtres."""
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        st.error(f"Erreur lors du chargement du fichier JSON : {e}")
+# --- NOUVELLE FONCTION : Chargement des données depuis MongoDB ---
+# Cette fonction remplace l'ancienne qui lisait le fichier JSON.
+@st.cache_data(ttl=3600) # Le cache de 1h permet de ne pas surcharger la base de données.
+def load_data_from_mongo():
+    """Charge les données des appels d'offres directement depuis MongoDB Atlas."""
+    
+    # On récupère l'adresse de la base de données depuis les variables d'environnement.
+    MONGO_URI = os.getenv("MONGO_URI")
+    if not MONGO_URI:
+        st.error("La variable d'environnement MONGO_URI n'est pas définie !")
         return [], {}
 
-    acheteurs, provinces, domaines = set(), set(), set()
-    for item in data:
-        if item.get("acheteur"): acheteurs.add(item["acheteur"])
-        if isinstance(item.get("provinces"), list): provinces.update(item["provinces"])
-        if isinstance(item.get("domains"), list):
-            for domain_item in item["domains"]:
-                if domain_item.get("domain"): domaines.add(domain_item["domain"])
-    
-    return data, {
-        "acheteurs": sorted(list(acheteurs)),
-        "provinces": sorted(list(provinces)),
-        "domaines": sorted(list(domaines))
-    }
+    try:
+        # On se connecte de manière sécurisée à la base de données.
+        client = MongoClient(
+            MONGO_URI,
+            tls=True,
+            tlsCAFile=certifi.where(),
+            serverSelectionTimeoutMS=10000 
+        )
+        
+        # On sélectionne la bonne base de données et la bonne collection.
+        db = client.safakate_db
+        collection = db.consultations
+        
+        # On récupère tous les documents et on les trie par date de publication.
+        data = list(collection.find({}).sort("publishedDate", -1))
+        
+        client.close()
+
+        # On prépare les listes pour les filtres de la barre latérale.
+        acheteurs, provinces, domaines = set(), set(), set()
+        for item in data:
+            if item.get("acheteur"): acheteurs.add(item["acheteur"])
+            if isinstance(item.get("provinces"), list): provinces.update(item["provinces"])
+            if isinstance(item.get("domains"), list):
+                for domain_item in item["domains"]:
+                    if domain_item.get("domain"): domaines.add(domain_item["domain"])
+        
+        return data, {
+            "acheteurs": sorted(list(acheteurs)),
+            "provinces": sorted(list(provinces)),
+            "domaines": sorted(list(domaines))
+        }
+
+    except Exception as e:
+        st.error(f"Erreur de connexion à MongoDB : {e}")
+        return [], {}
 
 def format_date(date_string):
     """Formate une date ISO en format lisible."""
@@ -139,21 +167,9 @@ def extraire_texte_fichier(chemin_fichier):
     else: return ""
 
 def decouper_texte(texte):
-    
-    """
-    Découpe un texte en paragraphes en se basant sur les sauts de ligne.
-    
-    Retourne une liste de paragraphes, où chaque paragraphe est une chaîne de caractères.
-    Les paragraphes vides sont ignorés.
-    """
-    
     return [p.strip() for p in texte.split("\n") if len(p.strip()) > 10]
 
-# --- Fonctions Weaviate et Workflow (avec ajouts) ---
-
-# --- NOUVEAU : Fonction pour convertir les .doc en .docx ---
-# --- NOUVEAU : Fonction pour convertir les .doc en .docx ---
-
+# --- Fonctions Weaviate et Workflow (inchangées) ---
 
 def traiter_fichier(client, chemin_fichier, model, progress_bar_placeholder):
     nom_fichier = os.path.basename(chemin_fichier)
@@ -181,9 +197,8 @@ def traiter_fichier(client, chemin_fichier, model, progress_bar_placeholder):
         doc_collection.data.insert_many(objects_to_insert)
         return len(objects_to_insert)
     return 0
-# --- MODIFIÉ : La fonction convertit maintenant les .doc ET les .rtf en .docx ---
+
 def convertir_vers_docx(dossier_path, status_placeholder):
-    """Convertit les .doc et .rtf en .docx (Windows + Word requis) et supprime les originaux."""
     if os.name != 'nt': 
         status_placeholder.update(label="⚠️ Conversion .doc/.rtf ignorée (non-Windows).")
         time.sleep(2)
@@ -192,14 +207,11 @@ def convertir_vers_docx(dossier_path, status_placeholder):
     word = None
     try:
         pythoncom.CoInitialize()
-        
-        # MODIFICATION : Recherche les fichiers se terminant par .doc ou .rtf.
         extensions_a_convertir = (".doc", ".rtf")
         fichiers_a_convertir = [f for f in os.listdir(dossier_path) if f.lower().endswith(extensions_a_convertir)]
         
         if not fichiers_a_convertir: return 
 
-        # Le message est maintenant plus générique.
         status_placeholder.update(label=f"🔄 Conversion de {len(fichiers_a_convertir)} fichier(s) Word...")
         word = win32.DispatchEx("Word.Application")
         word.Visible = False
@@ -211,22 +223,21 @@ def convertir_vers_docx(dossier_path, status_placeholder):
             doc = word.Documents.Open(chemin_original)
             doc.SaveAs(chemin_docx, FileFormat=16) 
             doc.Close()
-            os.remove(chemin_original) # Supprime le fichier .doc ou .rtf original
+            os.remove(chemin_original)
             
     except Exception as e:
         st.warning(f"Erreur durant la conversion de documents : {e}. MS Word est-il bien installé ?")
     finally:
         if word: word.Quit()
         pythoncom.CoUninitialize()
+
 def generer_liens(lien_initial: str):
-    """Génère un lien de téléchargement à partir d'un lien de consultation."""
     lien_demande = lien_initial.replace("entreprise.EntrepriseDetailsConsultation", "entreprise.EntrepriseDemandeTelechargementDce")
     lien_final = lien_demande.replace("entreprise.EntrepriseDemandeTelechargementDce", "entreprise.EntrepriseDownloadCompleteDce")
     lien_final = lien_final.replace("refConsultation=", "reference=")
     lien_final = lien_final.replace("orgAcronyme=", "orgAcronym=")
     return lien_final
 
-# --- MODIFIÉ : Le workflow de téléchargement intègre la conversion ---
 def telecharger_et_indexer_dossier(lien_initial, client, model):
     with st.status("🚀 Démarrage du processus...", expanded=True) as status:
         try:
@@ -260,11 +271,9 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
                     with zip_ref.open(member, 'r') as source, open(target_path, 'wb') as target:
                         shutil.copyfileobj(source, target)
             
-            # --- MODIFICATION : Appel de la fonction qui convertit les .doc ET .rtf ---
             convertir_vers_docx(FILES_DIRECTORY, status)
-            # --- FIN DE LA MODIFICATION ---
 
-            fichiers_extraits = os.listdir(FILES_DIRECTORY) # Rafraîchit la liste des fichiers après la conversion.
+            fichiers_extraits = os.listdir(FILES_DIRECTORY)
             status.update(label=f"✨ {len(fichiers_extraits)} fichiers prêts à être indexés.")
             time.sleep(1)
 
@@ -284,7 +293,7 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
             st.balloons()
             time.sleep(2)
             
-            st.rerun() # Rafraîchit l'interface pour afficher les résultats.
+            st.rerun()
 
         except Exception as e:
             status.update(label=f"❌ Erreur critique : {e}", state="error")
@@ -369,7 +378,6 @@ def display_list_view(data, filter_options):
                 st.session_state.page += 1; st.rerun()
 
 def display_process_view(client, model):
-    """Affiche la vue de traitement pour un appel d'offres spécifique."""
     st.title("⚙️ Traitement et Indexation d'un Appel d'Offres")
     if st.button("⬅️ Retour à la liste"):
         st.session_state.view = 'list'
@@ -432,7 +440,9 @@ def display_process_view(client, model):
 if 'view' not in st.session_state: st.session_state.view = 'list'
 if 'page' not in st.session_state: st.session_state.page = 1
 
-data, filter_options = load_and_prepare_data("resultats_uniques.json")
+# --- MODIFIÉ : On charge les variables d'environnement et on appelle la nouvelle fonction ---
+load_dotenv() # Charge les secrets du fichier .env pour le test local.
+data, filter_options = load_data_from_mongo() # Appelle la fonction qui se connecte à MongoDB.
 model = load_model()
 
 try:
