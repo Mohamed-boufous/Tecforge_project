@@ -46,42 +46,55 @@ def generer_liens(lien_initial):
         "orgAcronyme=", "orgAcronym="
     )
 
-# --- Fonction de sauvegarde dans MongoDB ---
-def save_to_mongodb(data_list):
-    print(f"Connexion à MongoDB pour sauvegarder {len(data_list)} consultations...")
+# --- Fonction de sauvegarde dans MongoDB (MODIFIÉE) ---
+# L'intérêt de cette fonction modifiée est d'ajouter une étape de suppression.
+# Après avoir mis à jour la base de données avec les dernières données de l'API,
+# elle supprime toutes les consultations qui ne sont plus présentes dans l'API,
+# assurant ainsi une synchronisation parfaite.
+def save_to_mongodb(data_list, current_ids):
+    print(f"Connexion à MongoDB pour synchroniser {len(data_list)} consultations...")
     client = None
     try:
-        # On utilise la configuration qui a fonctionné, avec un timeout plus long.
         client = MongoClient(
             MONGO_URI,
             tls=True,
             tlsCAFile=certifi.where(),
             serverSelectionTimeoutMS=60000
         )
-        # On teste la connexion avant de continuer
         client.admin.command('ping')
         print("Connexion MongoDB établie.")
         
         db = client.safakate_db 
         collection = db.consultations
 
-        operations = []
-        for item in data_list:
-            op = UpdateOne(
-                {"_id": item.get("consId")}, 
-                {"$set": item},             
-                upsert=True                 
-            )
-            operations.append(op)
+        # --- Étape 1: Mettre à jour et insérer les consultations actuelles (comme avant) ---
+        if data_list:
+            operations = []
+            for item in data_list:
+                op = UpdateOne(
+                    {"_id": item.get("consId")}, 
+                    {"$set": item},             
+                    upsert=True                 
+                )
+                operations.append(op)
+            
+            result_upsert = collection.bulk_write(operations)
+            print("Sauvegarde (Ajout/Mise à jour) dans MongoDB terminée.")
+            print(f"  - Consultations créées : {result_upsert.upserted_count}")
+            print(f"  - Consultations mises à jour : {result_upsert.modified_count}")
+        else:
+            print("Aucune nouvelle donnée à ajouter ou mettre à jour.")
 
-        if not operations:
-            print("Aucune donnée à sauvegarder.")
-            return
-
-        result = collection.bulk_write(operations)
-        print("Sauvegarde dans MongoDB terminée.")
-        print(f"  - Consultations créées : {result.upserted_count}")
-        print(f"  - Consultations mises à jour : {result.modified_count}")
+        # --- Étape 2: Supprimer les anciennes consultations qui n'existent plus dans l'API ---
+        # MODIFICATION: On ajoute une opération de suppression pour nettoyer la base de données.
+        print("Début de la suppression des anciennes consultations...")
+        
+        # Le filtre sélectionne les documents où le champ '_id' n'est PAS ($nin) dans la liste des ID actuels.
+        delete_filter = {"_id": {"$nin": list(current_ids)}}
+        result_delete = collection.delete_many(delete_filter)
+        
+        print("Suppression terminée.")
+        print(f"  - Consultations obsolètes supprimées : {result_delete.deleted_count}")
         
     except Exception as e:
         print(f"Une erreur est survenue avec MongoDB : {e}")
@@ -89,7 +102,7 @@ def save_to_mongodb(data_list):
         if client:
             client.close()
 
-# --- Script principal (MODIFIÉ) ---
+# --- Script principal ---
 def main():
     cookies = login(EMAIL, PASSWORD)
     if not cookies:
@@ -100,31 +113,28 @@ def main():
     all_results = []
     seen_ids = set()
     
-    # MODIFIÉ: On utilise un numéro de page au lieu d'un offset.
-    # C'est la correction principale pour parcourir tous les résultats.
     page = 0
-    limit = 20 # On peut toujours demander 20 résultats par page.
+    limit = 20
     total_count = None
     
     max_retries = 3
     retry_count = 0
 
     while True:
-        # MODIFIÉ: Le paramètre 'offset' est maintenant notre numéro de page.
         params = {
-        "offset": page,
-        "limit": limit,
-        "searchObjet": "",
-        "mosearch": "",
-        "dateLimitStart": datetime.now().strftime("%Y-%m-%dT09:00:00.000Z"),
-        "sort": "publishedDate",
-        "sortDirection": "DESC",
-        "state": "En cours",
-        "minCaution": 0,
-        "maxCaution": 0,
-        "minEstimation": 0,
-        "maxEstimation": 0
-    }
+            "offset": page,
+            "limit": limit,
+            "searchObjet": "",
+            "mosearch": "",
+            "dateLimitStart": datetime.now().strftime("%Y-%m-%dT09:00:00.000Z"),
+            "sort": "publishedDate",
+            "sortDirection": "DESC",
+            "state": "En cours",
+            "minCaution": 0,
+            "maxCaution": 0,
+            "minEstimation": 0,
+            "maxEstimation": 0
+        }
         try:
             response = requests.get(BASE_URL, headers=headers, params=params, timeout=30)
             if response.status_code == 401:
@@ -142,7 +152,6 @@ def main():
                 total_count = data.get("total", 0)
                 print(f"Total des consultations à traiter : {total_count}")
 
-            # Si une page est vide (et ce n'est pas la première), on a probablement fini.
             if not results_on_page and page > 0: 
                 print("Fin de la récupération des données de l'API (page vide).")
                 break
@@ -158,12 +167,10 @@ def main():
             
             retry_count = 0
             
-            # La condition de sortie la plus fiable est de comparer avec le total.
             if total_count is not None and len(all_results) >= total_count:
                 print("Toutes les consultations ont été collectées.")
                 break
             
-            # MODIFIÉ: On passe à la page suivante.
             page += 1
             time.sleep(0.5)
 
@@ -178,9 +185,15 @@ def main():
             time.sleep(5)
 
     if all_results:
-        save_to_mongodb(all_results)
+        # MODIFICATION: On crée un ensemble de tous les ID de consultation actuels à partir des résultats de l'API.
+        current_ids = {item.get("consId") for item in all_results if item.get("consId")}
+        
+        # MODIFICATION: On passe cet ensemble d'IDs à la fonction de sauvegarde pour qu'elle puisse nettoyer la base de données.
+        save_to_mongodb(all_results, current_ids)
     else:
-        print("Aucune donnée n'a été collectée pour la sauvegarde.")
+        # MODIFICATION: Si aucune donnée n'est collectée, on appelle quand même la fonction pour supprimer les anciennes données de la DB.
+        print("Aucune donnée n'a été collectée. Nettoyage de la base de données...")
+        save_to_mongodb([], set()) # On passe une liste vide et un ensemble vide.
 
     print("Processus terminé.")
 
