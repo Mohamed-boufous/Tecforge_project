@@ -300,41 +300,131 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
 
 # --- Vues de l'Application (inchangées) ---
 
+import streamlit as st
+import math
+import os
+
+# --- Fonctions utilitaires (à placer en haut de votre script) ---
+# Assurez-vous que ces fonctions sont définies dans votre script
+def format_date(date_string):
+    """Formate une date ISO en format lisible."""
+    if not date_string: return "N/A"
+    try:
+        # Importation nécessaire à l'intérieur de la fonction si elle n'est pas globale
+        from datetime import datetime
+        dt_object = datetime.fromisoformat(date_string.replace('Z', '+00:00'))
+        return dt_object.strftime("%A %d/%m/%Y %H:%M")
+    except (ValueError, TypeError): return "Date invalide"
+
+def jours_restants(date_string):
+    """Calcule le nombre de jours restants avant une date."""
+    if not date_string: return ""
+    try:
+        # Importations nécessaires
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        end_date = datetime.fromisoformat(date_string.replace('Z', '+00:00'))
+        delta = end_date - now
+        if delta.days >= 0:
+            return f"⏳ Il reste {delta.days} jour(s)"
+        else:
+            return "Terminé"
+    except (ValueError, TypeError): return ""
+
+
+# --- Fonction Principale Corrigée et Améliorée ---
+
 def display_list_view(data, filter_options):
+    """
+    Affiche la liste des appels d'offres avec filtres et une pagination améliorée.
+    """
+    # Intérêt : Centraliser le style pour faciliter les modifications et alléger le code HTML.
+    st.markdown("""
+    <style>
+    .card {
+        border: 1px solid #e5e7eb;
+        border-radius: 0.75rem;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+        transition: box-shadow 0.3s ease-in-out;
+    }
+    .card:hover {
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+    .badge-en-cours {
+        background-color:#dcfce7;
+        color:#166534;
+        padding: 5px 12px;
+        border-radius: 9999px;
+        font-weight: 600;
+        text-align: center;
+        font-size: 0.875rem;
+        margin-top: 10px;
+    }
+    .lot-title {
+        font-size:1.2rem;
+        font-weight:bold;
+        color:#374151;
+        text-align:center;
+        margin:20px 0;
+        padding:10px;
+        background-color:#f9fafb;
+        border-radius:8px;
+    }
+    /* La classe pagination-container n'est plus nécessaire avec st.columns */
+    </style>
+    """, unsafe_allow_html=True)
+
+    # --- Section des Filtres ---
     st.sidebar.header("🔎 Filtres")
     keyword_filter = st.sidebar.text_input("Rechercher par Réf, ID ou Objet")
     acheteur_filter = st.sidebar.multiselect("Filtrer par Acheteur", options=filter_options["acheteurs"])
     province_filter = st.sidebar.multiselect("Filtrer par Province", options=filter_options["provinces"])
     domaine_filter = st.sidebar.multiselect("Filtrer par Domaine", options=filter_options["domaines"])
 
+    # --- Logique de Filtrage ---
     filtered_data = data
     if keyword_filter:
         keyword_lower = keyword_filter.lower()
-        filtered_data = [item for item in filtered_data if keyword_lower in str(item.get("consId", "")).lower() or keyword_lower in item.get("reference", "").lower() or any(keyword_lower in lot.get("lotObject", "").lower() for lot in item.get("lots", []))]
-    if acheteur_filter: filtered_data = [item for item in filtered_data if item.get("acheteur") in acheteur_filter]
-    if province_filter: filtered_data = [item for item in filtered_data if any(p in province_filter for p in item.get("provinces", []))]
-    if domaine_filter: filtered_data = [item for item in filtered_data if any(d.get("domain") in domaine_filter for d in item.get("domains", []))]
+        filtered_data = [
+            item for item in filtered_data if
+            keyword_lower in str(item.get("consId", "")).lower() or
+            keyword_lower in item.get("reference", "").lower() or
+            any(keyword_lower in lot.get("lotObject", "").lower() for lot in item.get("lots", []))
+        ]
+    if acheteur_filter:
+        filtered_data = [item for item in filtered_data if item.get("acheteur") in acheteur_filter]
+    if province_filter:
+        filtered_data = [item for item in filtered_data if any(p in province_filter for p in item.get("provinces", []))]
+    if domaine_filter:
+        filtered_data = [item for item in filtered_data if any(d.get("domain") in domaine_filter for d in item.get("domains", []))]
 
+    # --- Affichage du Titre et des Résultats ---
     st.title("📄 Appels d'Offres Publics")
     st.write(f"**{len(filtered_data)}** résultat(s) trouvé(s)")
     st.divider()
 
+    # --- Logique de Pagination ---
     ITEMS_PER_PAGE = 10
     total_items = len(filtered_data)
     total_pages = math.ceil(total_items / ITEMS_PER_PAGE) if total_items > 0 else 1
+    # Modification : S'assurer que la page ne dépasse pas le total après filtrage
     if 'page' not in st.session_state or st.session_state.page > total_pages:
         st.session_state.page = 1
     start_index = (st.session_state.page - 1) * ITEMS_PER_PAGE
     paginated_data = filtered_data[start_index:start_index + ITEMS_PER_PAGE]
 
+    # --- Affichage des Éléments de la Page ---
     for item in paginated_data:
+        # Modification : Utilisation de border=True pour un style de carte moderne et propre.
         with st.container(border=True):
             col_header_text, col_header_badge = st.columns([0.8, 0.2])
             with col_header_text:
                 st.markdown(f'<h5>{item.get("AchAbr", "")} - {item.get("acheteur", "N/A")}</h5>', unsafe_allow_html=True)
                 st.caption(f"Publié le : {format_date(item.get('publishedDate'))}")
             with col_header_badge:
-                st.markdown('<div style="background-color:#dcfce7;color:#166534;padding:5px 12px;border-radius:15px;font-weight:bold;text-align:center;margin-top:10px;">EN COURS</div>', unsafe_allow_html=True)
+                st.markdown('<div class="badge-en-cours">EN COURS</div>', unsafe_allow_html=True)
             
             st.divider()
 
@@ -358,24 +448,55 @@ def display_list_view(data, filter_options):
                     st.rerun()
 
             for lot in item.get("lots", []):
-                st.markdown(f'<div style="font-size:1.2rem;font-weight:bold;color:#374151;text-align:center;margin:20px 0;padding:10px;background-color:#f9fafb;border-radius:8px;">{lot.get("lotObject", "Non spécifié")}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="lot-title">{lot.get("lotObject", "Non spécifié")}</div>', unsafe_allow_html=True)
                 lot_col1, lot_col2, lot_col3 = st.columns(3)
                 lot_col1.metric("Catégorie", lot.get("lotCategory", "N/A"))
                 lot_col2.metric("Estimation", f"{lot.get('lotEstimation', 0):,.2f} MAD".replace(",", " "))
                 lot_col3.metric("Caution", f"{lot.get('lotCaution', 0):,.2f} MAD".replace(",", " "))
         st.write("") 
 
+    # --- MODIFIÉ : Contrôles de Pagination sur deux lignes ---
+    # Intérêt : Nouvelle disposition pour la pagination pour une meilleure ergonomie.
     if total_pages > 1:
         st.divider()
-        col_prev, col_page, col_next = st.columns([1, 1, 1])
+        
+        # Ligne 1 : Boutons et champ de saisie.
+        # Modification : Utilisation de 3 colonnes pour séparer les boutons du champ de saisie.
+        col_prev, col_input, col_next = st.columns([3, 1, 3])
+
         with col_prev:
+            # Bouton Précédent
             if st.button("⬅️ Précédent", disabled=(st.session_state.page <= 1), use_container_width=True):
-                st.session_state.page -= 1; st.rerun()
-        with col_page:
-            st.write(f"<div style='text-align:center;margin-top:8px;'><b>Page {st.session_state.page} sur {total_pages}</b></div>", unsafe_allow_html=True)
+                st.session_state.page -= 1
+                st.rerun()
+        
+        with col_input:
+            # Champ pour entrer le numéro de page, maintenant au centre.
+            page_input = st.number_input(
+                "Page",
+                min_value=1,
+                max_value=total_pages,
+                value=st.session_state.page,
+                key="page_input",
+                label_visibility="collapsed"
+            )
+            if page_input != st.session_state.page:
+                st.session_state.page = page_input
+                st.rerun()
+
         with col_next:
+            # Bouton Suivant
             if st.button("Suivant ➡️", disabled=(st.session_state.page >= total_pages), use_container_width=True):
-                st.session_state.page += 1; st.rerun()
+                st.session_state.page += 1
+                st.rerun()
+
+        # Ligne 2 : Texte "sur X pages".
+        # Modification : Ajout d'une nouvelle ligne pour afficher le total des pages sous le champ de saisie.
+        _, col_text_total, _ = st.columns([3, 1, 3])
+        with col_text_total:
+             st.markdown(f"<div style='text-align:center;'>sur {total_pages}</div>", unsafe_allow_html=True)
+
+
 
 def display_process_view(client, model):
     st.title("⚙️ Traitement et Indexation d'un Appel d'Offres")
