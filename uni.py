@@ -24,6 +24,7 @@ import concurrent.futures
 from pymongo import MongoClient
 import certifi
 from dotenv import load_dotenv
+import subprocess
 
 # --- Imports spécifiques à Windows ---
 if os.name == 'nt':
@@ -213,34 +214,51 @@ def traiter_fichier(client, chemin_fichier, model, progress_queue):
 
 
 def convertir_vers_docx(dossier_path):
-    if os.name != 'nt':
-        st.info("⚠️ Conversion .doc/.rtf ignorée (système non-Windows).")
-        return
-    word = None
-    try:
-        pythoncom.CoInitialize()
-        extensions = (".doc", ".rtf")
-        fichiers_a_convertir = [f for f in os.listdir(dossier_path) if f.lower().endswith(extensions)]
-        if not fichiers_a_convertir: return
+    """
+    Convertit les .doc et .rtf en .docx en utilisant LibreOffice.
+    Cette méthode est fiable et préserve le formatage.
+    """
+    # 1. On trouve les fichiers à convertir
+    extensions = (".doc", ".rtf")
+    fichiers_a_convertir = [f for f in os.listdir(dossier_path) if f.lower().endswith(extensions) and not f.startswith('~$')]
 
-        st.session_state.conversion_files = fichiers_a_convertir
-        placeholder = st.empty()
-        word = win32.DispatchEx("Word.Application")
-        word.Visible = False
-        for nom_fichier in fichiers_a_convertir:
-            placeholder.info(f"🔄 Conversion de {nom_fichier}...")
-            chemin_original = os.path.abspath(os.path.join(dossier_path, nom_fichier))
-            chemin_docx = os.path.abspath(os.path.join(dossier_path, Path(nom_fichier).stem + ".docx"))
-            doc = word.Documents.Open(chemin_original)
-            doc.SaveAs(chemin_docx, FileFormat=16)
-            doc.Close()
+    if not fichiers_a_convertir:
+        st.info("Aucun fichier .doc ou .rtf à convertir.")
+        return
+
+    placeholder = st.empty()
+    fichiers_convertis = 0
+
+    for nom_fichier in fichiers_a_convertir:
+        chemin_original = os.path.join(dossier_path, nom_fichier)
+        placeholder.info(f"🔄 Conversion de {nom_fichier} avec LibreOffice...")
+
+        try:
+            # 2. On prépare et exécute la commande LibreOffice
+            commande = [
+                "soffice",
+                "--headless",        # Exécute sans ouvrir de fenêtre
+                "--convert-to", "docx", # Format de sortie
+                "--outdir", dossier_path, # Dossier de destination
+                chemin_original      # Fichier à convertir
+            ]
+            result = subprocess.run(commande, check=True, capture_output=True, timeout=120)
+
+            # 3. Si la conversion réussit, on supprime l'ancien fichier
             os.remove(chemin_original)
-        placeholder.empty()
-    except Exception as e:
-        st.warning(f"Erreur durant la conversion Word : {e}. MS Word est-il bien installé ?")
-    finally:
-        if word: word.Quit()
-        pythoncom.CoUninitialize()
+            fichiers_convertis += 1
+
+        except FileNotFoundError:
+            st.error("❌ Commande 'soffice' introuvable. Vérifiez que l'Étape 2 (ajout au PATH) a bien été effectuée.")
+            return # Inutile de continuer
+        except subprocess.CalledProcessError as e:
+            st.warning(f"⚠️ La conversion de '{nom_fichier}' a échoué. Erreur : {e.stderr.decode()}")
+        except Exception as e:
+            st.warning(f"⚠️ Une erreur est survenue lors de la conversion de '{nom_fichier}': {e}")
+
+    placeholder.empty()
+    if fichiers_convertis > 0:
+        st.success(f"{fichiers_convertis} fichier(s) ont été convertis en .docx.")
 
 def generer_liens(lien_initial: str):
     lien_demande = lien_initial.replace("entreprise.EntrepriseDetailsConsultation", "entreprise.EntrepriseDemandeTelechargementDce")
@@ -600,6 +618,7 @@ def display_process_view(client, model):
                     st.divider()
         elif not requete_utilisateur: st.warning("Veuillez entrer une requête de recherche.")
         else: st.warning("La base de données est vide. Veuillez d'abord traiter un dossier.")
+# AJOUTEZ CETTE NOUVELLE FONCTION
 
 # --- Exécution Principale ---
 if 'view' not in st.session_state: st.session_state.view = 'list'
