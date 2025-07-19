@@ -458,7 +458,7 @@ def telecharger_et_indexer_dossier(lien_initial, client, model):
                 convertir_vers_docx(FILES_DIRECTORY)
                 if st.session_state.get('conversion_files'):
                     st.success(f"{len(st.session_state.conversion_files)} fichier(s) converti(s) en .docx.")
-                else: st.info("Aucun fichier .doc ou .rtf à convertir.")
+                
 
             # --- MODIFIÉ : Ajout d'un filtre pour ignorer les fichiers temporaires ---
             # Intérêt : On ne traite que les fichiers valides et on ignore ceux qui commencent par '~$' pour éviter les erreurs.
