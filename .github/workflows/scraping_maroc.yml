@@ -1,0 +1,50 @@
+name: Scraper Quotidien (Maroc)
+
+on:
+  # Permet de lancer le script manuellement depuis l'onglet "Actions" de GitHub
+  workflow_dispatch:
+  # Exécute le script automatiquement tous les jours à minuit (UTC)
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+    # Étape 1: Récupère le code de ton dépôt
+    - name: Checkout du code
+      uses: actions/checkout@v3
+
+    # Étape 2: Met en place Python
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    # Étape 3: Installe les bibliothèques du bon dossier
+    - name: Installation des dépendances
+      run: |
+        python -m pip install --upgrade pip
+        # On spécifie le chemin vers le bon fichier requirements.txt
+        pip install -r ScrappingMaroc/requirements.txt
+
+    # Étape 4: Exécute le script de scraping
+    - name: Lancement du script de scraping
+      env:
+        # On injecte le secret MONGO2_URI dans la variable d'environnement MONGO_URI
+        # que le script Python utilise
+        MONGO_URI: ${{ secrets.MONGO2_URI }}
+      # On spécifie le chemin vers le bon script Python
+      run: python ScrappingMaroc/Scrapping.py
+
+    # Étape 5: Commit et Push du fichier JSON mis à jour
+    - name: Commit des résultats
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        # On ajoute le fichier JSON qui a été généré
+        git add offres_marchespublics_complet.json
+        # On ne commite que s'il y a eu des changements dans le fichier
+        git diff --staged --quiet || git commit -m "Mise à jour des données de scraping (Maroc)"
+        git push

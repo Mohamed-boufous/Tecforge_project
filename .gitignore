@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 resultats_uniques.json
-
+chromedriver.exe
 documents/
 consultations.db
+offres_marchespublics_complet.json
