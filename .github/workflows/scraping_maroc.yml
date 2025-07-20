@@ -30,12 +30,12 @@ jobs:
         pip install -r ScrappingMaroc/requirements.txt
 
     # Étape 4: Exécute le script de scraping
+    # Étape 4: Exécute le script de scraping
     - name: Lancement du script de scraping
       env:
-        # On injecte le secret MONGO2_URI dans la variable d'environnement MONGO_URI
-        # que le script Python utilise
-        MONGO_URI: ${{ secrets.MONGO2_URI }}
-      # On spécifie le chemin vers le bon script Python
+        # L'intérêt est de faire correspondre exactement le nom de la variable
+        # attendue par le script (MONGO2_URI) avec le secret GitHub.
+        MONGO2_URI: ${{ secrets.MONGO2_URI }}
       run: python ScrappingMaroc/Scrapping.py
 
     # Étape 5: Commit et Push du fichier JSON mis à jour
