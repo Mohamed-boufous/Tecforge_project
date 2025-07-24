@@ -1,0 +1,58 @@
+##################################################################
+# GUIDE D'INSTALLATION ET D'EXECUTION DU SCRIPT SUR UBUNTU
+##################################################################
+
+---
+# ÉTAPE 1 : PRÉPARATION DU SYSTÈME
+---
+
+# 1.1 - Ouvrez le Terminal.
+# (Cliquez sur les 9 points en bas à gauche, cherchez "Terminal" et ouvrez-le).
+
+# 1.2 - Mettre à jour le système.
+# Copiez-collez les commandes suivantes une par une.
+sudo apt update
+sudo apt upgrade -y
+
+# 1.3 - Installer les outils nécessaires (Python Pip, Venv, Git).
+sudo apt install python3-pip python3-venv git -y
+
+# 1.4 - Installer Google Chrome (requis pour Selenium).
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo dpkg -i google-chrome-stable_current_amd64.deb
+sudo apt-get install -f -y
+rm google-chrome-stable_current_amd64.deb
+
+---
+# ÉTAPE 2 : CONFIGURATION DU PROJET
+---
+
+# 2.1 - Cloner le projet depuis GitHub.
+git clone https://github.com/Mohamed-boufous/Tecforge_project
+
+# 2.2 - Se déplacer dans le dossier du projet.
+cd Tecforge_project
+
+# 2.3 - Créer et activer l'environnement virtuel Python.
+python3 -m venv env
+source env/bin/activate
+# (Votre terminal devrait maintenant afficher "(env)" au début de la ligne).
+
+# 2.4 - Se déplacer dans le sous-dossier du script.
+cd ScrappingMaroc
+
+# 2.5 - Installer les bibliothèques Python requises.
+pip install -r requirements.txt
+
+# 2.6 - Créer le fichier d'environnement .env.
+# IMPORTANT : Remplacez "VOTRE_CLE_MONGO_DB_ATLAS_ICI" par votre vraie clé.
+echo 'MONGO2_URI="VOTRE_CLE_MONGO_DB_ATLAS_ICI"' > .env
+
+---
+# ÉTAPE 3 : EXÉCUTION DU SCRIPT
+---
+
+# 3.1 - Lancer le script de scraping.
+# Assurez-vous d'être toujours dans le dossier "ScrappingMaroc" et que votre
+# environnement "(env)" est activé.
+python Scrapping.py
