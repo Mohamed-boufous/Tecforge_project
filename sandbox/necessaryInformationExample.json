@@ -1,0 +1,53 @@
+{
+  "reference": "",
+  "objet_marche": "",
+  "maitre_ouvrage": {
+    "nom": "",
+    "adresse": "",
+    "telephone": "",
+    "fax": ""
+  },
+  "budget": "",
+  "date_publication": "",
+  "delai_execution": {
+    "total": "",
+    "phase1": "",
+    "phase2": ""
+  },
+  "documents_requis": {
+    "administratif": [],
+    "technique": [],
+    "financier": []
+  },
+  "conditions_participation": [],
+  "composition_equipe": {
+    "chef_de_mission": {
+      "diplome": "",
+      "experience": "",
+      "competences": []
+    },
+    "expert_exploitation": {
+      "diplome": "",
+      "experience": "",
+      "competences": []
+    },
+    "expert_maintenance": {
+      "diplome": "",
+      "experience": "",
+      "competences": []
+    }
+  },
+  "critere_selection": {
+    "note_technique": "",
+    "note_financiere": "",
+    "note_minimale": "",
+    "ponderation": {
+      "technique": "",
+      "financiere": ""
+    }
+  },
+  "mode_soumission": {
+    "electronique": true,
+    "support_portail": "www.marchespublics.gov.ma"
+  }
+}
