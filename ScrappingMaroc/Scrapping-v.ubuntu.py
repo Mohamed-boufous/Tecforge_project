@@ -171,7 +171,7 @@ if __name__ == "__main__":
     driver = None
 
     try:
-        service = Service('/usr/local/bin/chromedriver')
+        service = ChromeService('/usr/local/bin/chromedriver')
         driver = webdriver.Chrome(service=service, options=options)
         driver.get(URL)
         
