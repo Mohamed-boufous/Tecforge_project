@@ -172,8 +172,8 @@ if __name__ == "__main__":
 
     try:
         # Use system chromedriver instead of ChromeDriverManager
-        service = Service('/usr/bin/chromedriver')  # or '/snap/bin/chromedriver'
-        driver = webdriver.Chrome(service=ChromeService, options=options)
+        service = ChromeService('/usr/bin/chromedriver')  # or '/snap/bin/chromedriver'
+        driver = webdriver.Chrome(service=service, options=options)
         driver.get(URL)
         
         try:
