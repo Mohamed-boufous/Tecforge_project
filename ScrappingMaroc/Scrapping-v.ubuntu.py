@@ -171,8 +171,27 @@ if __name__ == "__main__":
     driver = None
 
     try:
-        # Use system chromedriver instead of ChromeDriverManager
-        service = ChromeService('/usr/bin/chromedriver')  # or '/snap/bin/chromedriver'
+        # chromedriver paths
+        chromedriver_paths = [
+            '/snap/bin/chromedriver',
+            '/usr/bin/chromedriver', 
+            '/usr/local/bin/chromedriver'
+        ]
+        
+        service = None
+        for path in chromedriver_paths:
+            try:
+                print(f"Trying chromedriver at: {path}")
+                service = Service(path)
+                break
+            except:
+                continue
+        
+        if service is None:
+            # Fallback to ChromeDriverManager
+            from webdriver_manager.chrome import ChromeDriverManager
+            service = ChromeService(ChromeDriverManager().install())
+        
         driver = webdriver.Chrome(service=service, options=options)
         driver.get(URL)
         
